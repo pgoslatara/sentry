@@ -396,8 +396,9 @@ def start_chrome(**chrome_args):
             )
 
 
-@pytest.fixture(scope="class")
-def browser(request, live_server):
+@pytest.fixture(scope="session")
+def _browser_driver(request, live_server):
+    """Session-scoped fixture that creates and manages the browser driver."""
     window_size = request.config.getoption("window_size")
     window_width, window_height = map(int, window_size.split("x", 1))
 
@@ -434,8 +435,6 @@ def browser(request, live_server):
 
     driver.set_window_size(window_width, window_height)
 
-    request.node._driver = driver
-
     browser = Browser(driver, live_server)
 
     browser.set_emulated_media([{"name": "prefers-reduced-motion", "value": "reduce"}])
@@ -450,11 +449,7 @@ def browser(request, live_server):
     with assume_test_silo_mode(SiloMode.CONTROL):
         browser.save_cookie("acceptance_test_cookie", "1", path="/auth/login/")
 
-    if hasattr(request, "cls"):
-        request.cls.browser = browser
-    request.node.browser = browser
-
-    yield driver
+    yield browser
 
     # dump console log to stdout, will be shown when test fails
     for entry in driver.get_log("browser"):
@@ -466,6 +461,22 @@ def browser(request, live_server):
         driver.quit()
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+def browser(request, _browser_driver):
+    """Function-scoped fixture that injects the browser into test classes/instances."""
+    # Store driver reference for pytest hooks to access
+    request.node._driver = _browser_driver.driver
+
+    # Inject browser into test class if it exists
+    if hasattr(request, "cls") and request.cls is not None:
+        request.cls.browser = _browser_driver
+
+    # Also store on the node for access in hooks
+    request.node.browser = _browser_driver
+
+    yield _browser_driver
 
 
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
