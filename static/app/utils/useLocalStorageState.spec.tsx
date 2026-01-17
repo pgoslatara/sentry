@@ -1,4 +1,4 @@
-import {act, renderHook, waitFor, render} from 'sentry-test/reactTestingLibrary';
+import {act, render, renderHook, waitFor} from 'sentry-test/reactTestingLibrary';
 
 import localStorageWrapper from 'sentry/utils/localStorage';
 import {useLocalStorageState} from 'sentry/utils/useLocalStorageState';
