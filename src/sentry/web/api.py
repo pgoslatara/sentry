@@ -4,6 +4,7 @@ from django.views.decorators.cache import cache_control
 from django.views.generic.base import View as BaseView
 from rest_framework.request import Request
 
+from sentry import features
 from sentry.conf.types.sentry_config import SentryMode
 from sentry.models.project import Project
 from sentry.utils import json
@@ -128,7 +129,7 @@ def oauth_authorization_server_metadata(request: HttpRequest) -> HttpResponse:
             "none",
         ],
         "scopes_supported": sorted(settings.SENTRY_SCOPES),
-        "client_id_metadata_document_supported": True,
+        "client_id_metadata_document_supported": features.has("oauth:cimd-enabled"),
     }
 
     return HttpResponse(json.dumps(metadata), content_type="application/json")
