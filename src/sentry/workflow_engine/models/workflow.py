@@ -6,8 +6,6 @@ from typing import Any, ClassVar, TypedDict
 
 from django.conf import settings
 from django.db import models
-from django.db.models.signals import post_save, pre_save
-from django.dispatch import receiver
 
 from sentry.backup.scopes import RelocationScope
 from sentry.constants import ObjectStatus
@@ -16,13 +14,11 @@ from sentry.db.models.fields.hybrid_cloud_foreign_key import HybridCloudForeignK
 from sentry.db.models.manager.base import BaseManager
 from sentry.db.models.manager.base_query_set import BaseQuerySet
 from sentry.models.owner_base import OwnerModel
-from sentry.workflow_engine.caches.workflow import invalidate_processing_workflows
 from sentry.workflow_engine.models.data_condition import DataCondition, is_slow_condition
 from sentry.workflow_engine.models.data_condition_group import (
     DataConditionGroup,
     DataConditionGroupSnapshot,
 )
-from sentry.workflow_engine.models.detector import Detector
 from sentry.workflow_engine.processors.data_condition_group import TriggerResult
 from sentry.workflow_engine.types import ConditionError, WorkflowEventData
 
@@ -170,18 +166,3 @@ def get_slow_conditions(workflow: Workflow) -> list[DataCondition]:
         if is_slow_condition(condition)
     ]
     return slow_conditions
-
-
-@receiver(pre_save, sender=Workflow)
-def enforce_config_schema(sender, instance: Workflow, **kwargs):
-    instance.validate_config(instance.config_schema)
-
-
-@receiver(post_save, sender=Workflow)
-def invalidate_processing_cache(sender, workflow: Workflow):
-    # get the list of associated detectors that need the caches cleared
-    detectors = Detector.objects.filter(detectorworkflow_workflow=workflow)
-
-    # env is the related environment(s)?
-    for detector in detectors:
-        invalidate_processing_workflows(detector.id, workflow.environment_id)
