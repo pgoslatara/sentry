@@ -64,13 +64,13 @@ interface SelectRowProps {
   ) => boolean;
   disabled?: boolean;
   error?: Record<string, any>;
+  /**
+   * Whether this is a categorical bar widget. When true, uses SET_CATEGORICAL_AGGREGATE
+   * action which automatically merges aggregates with existing X-axis fields.
+   */
+  isCategoricalBar?: boolean;
   setError?: (error: Record<string, any>) => void;
   stringFields?: string[];
-  /**
-   * Optional wrapper function for the dispatch payload.
-   * Used by categorical bar widgets to preserve X-axis fields when updating aggregates.
-   */
-  wrapPayload?: (payload: QueryFieldValue[]) => QueryFieldValue[];
 }
 
 export function renderDropdownMenuFooter() {
@@ -118,7 +118,7 @@ export function SelectRow({
   columnFilterMethod,
   aggregates,
   disabled,
-  wrapPayload,
+  isCategoricalBar,
 }: SelectRowProps) {
   const organization = useOrganization();
   const {state, dispatch} = useWidgetBuilderContext();
@@ -127,9 +127,15 @@ export function SelectRow({
 
   const isTimeSeriesWidget = usesTimeSeriesData(state.displayType);
 
+  // Determines which action to use for updating visualization fields:
+  // - Time series widgets: SET_Y_AXIS for y-axis aggregates
+  // - Categorical bar widgets: SET_CATEGORICAL_AGGREGATE (reducer handles merging with X-axis)
+  // - Other widgets (table, big number): SET_FIELDS for all columns
   const updateAction = isTimeSeriesWidget
     ? BuilderStateAction.SET_Y_AXIS
-    : BuilderStateAction.SET_FIELDS;
+    : isCategoricalBar
+      ? BuilderStateAction.SET_CATEGORICAL_AGGREGATE
+      : BuilderStateAction.SET_FIELDS;
 
   const openColumnSelect = useCallback(() => {
     requestAnimationFrame(() => {
@@ -420,7 +426,7 @@ export function SelectRow({
           }
           dispatch({
             type: updateAction,
-            payload: wrapPayload ? wrapPayload(newFields) : newFields,
+            payload: newFields,
           });
           setError?.({...error, queries: []});
         }}
@@ -452,7 +458,7 @@ export function SelectRow({
               }
               dispatch({
                 type: updateAction,
-                payload: wrapPayload ? wrapPayload(newFields) : newFields,
+                payload: newFields,
               });
               setError?.({...error, queries: []});
               trackAnalytics('dashboards_views.widget_builder.change', {

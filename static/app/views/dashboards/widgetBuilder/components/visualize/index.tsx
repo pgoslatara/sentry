@@ -376,27 +376,16 @@ function Visualize({error, setError}: VisualizeProps) {
         isTableWidget ||
         (isBigNumberWidget && datasetConfig.enableEquations)));
   const linkedDashboards = state.linkedDashboards || [];
+
+  // Determines which action to use for updating visualization fields:
+  // - Time series widgets: SET_Y_AXIS for y-axis aggregates
+  // - Categorical bar widgets: SET_CATEGORICAL_AGGREGATE (reducer handles merging with X-axis)
+  // - Other widgets (table, big number): SET_FIELDS for all columns
   const updateAction = usesYAxis
     ? BuilderStateAction.SET_Y_AXIS
-    : BuilderStateAction.SET_FIELDS;
-
-  // For categorical bars, we need to preserve X-axis field entries (FIELD kind)
-  // when updating aggregates. This is the inverse of XAxisSelector's logic.
-  const xAxisFields = useMemo(
-    () =>
-      isCategoricalBarWidget
-        ? (state.fields?.filter(f => f.kind === FieldValueKind.FIELD) ?? [])
-        : [],
-    [isCategoricalBarWidget, state.fields]
-  );
-
-  // Helper to wrap payload for categorical bars, preserving X-axis fields
-  const wrapFieldsPayload = (newAggregates: QueryFieldValue[]): QueryFieldValue[] => {
-    if (isCategoricalBarWidget) {
-      return [...xAxisFields, ...newAggregates];
-    }
-    return newAggregates;
-  };
+    : isCategoricalBarWidget
+      ? BuilderStateAction.SET_CATEGORICAL_AGGREGATE
+      : BuilderStateAction.SET_FIELDS;
 
   const fieldOptions = useMemo(() => {
     // Explicitly merge numeric and string tags to ensure filtering
@@ -601,9 +590,7 @@ function Visualize({error, setError}: VisualizeProps) {
               if (activeIndex !== overIndex) {
                 dispatch({
                   type: updateAction,
-                  payload: wrapFieldsPayload(
-                    arrayMove(fields ?? [], activeIndex, overIndex)
-                  ),
+                  payload: arrayMove(fields ?? [], activeIndex, overIndex),
                 });
               }
             }
@@ -754,10 +741,8 @@ function Visualize({error, setError}: VisualizeProps) {
                                 onUpdate={value => {
                                   dispatch({
                                     type: updateAction,
-                                    payload: wrapFieldsPayload(
-                                      fields.map((_field, i) =>
-                                        i === index ? {..._field, field: value} : _field
-                                      )
+                                    payload: fields.map((_field, i) =>
+                                      i === index ? {..._field, field: value} : _field
                                     ),
                                   });
                                   setError?.({...error, queries: []});
@@ -785,10 +770,8 @@ function Visualize({error, setError}: VisualizeProps) {
                                 onUpdate={value => {
                                   dispatch({
                                     type: updateAction,
-                                    payload: wrapFieldsPayload(
-                                      fields.map((_field, i) =>
-                                        i === index ? {..._field, field: value} : _field
-                                      )
+                                    payload: fields.map((_field, i) =>
+                                      i === index ? {..._field, field: value} : _field
                                     ),
                                   });
                                   setError?.({...error, queries: []});
@@ -835,9 +818,7 @@ function Visualize({error, setError}: VisualizeProps) {
                                   columnFilterMethod={columnFilterMethod}
                                   aggregates={aggregates}
                                   disabled={disableTransactionWidget}
-                                  wrapPayload={
-                                    isCategoricalBarWidget ? wrapFieldsPayload : undefined
-                                  }
+                                  isCategoricalBar={isCategoricalBarWidget}
                                 />
                               )}
                               {field.kind === FieldValueKind.FUNCTION &&
@@ -869,7 +850,7 @@ function Visualize({error, setError}: VisualizeProps) {
                                               ] = value;
                                               dispatch({
                                                 type: updateAction,
-                                                payload: wrapFieldsPayload(newFields),
+                                                payload: newFields,
                                               });
                                               setError?.({...error, queries: []});
                                             }}
@@ -897,7 +878,7 @@ function Visualize({error, setError}: VisualizeProps) {
                                       newFields[index]!.function[1] = value;
                                       dispatch({
                                         type: updateAction,
-                                        payload: wrapFieldsPayload(newFields),
+                                        payload: newFields,
                                       });
                                       setError?.({...error, queries: []});
                                     }}
@@ -923,7 +904,7 @@ function Visualize({error, setError}: VisualizeProps) {
                                   dispatch(
                                     {
                                       type: updateAction,
-                                      payload: wrapFieldsPayload(newFields),
+                                      payload: newFields,
                                     },
                                     {updateUrl: false}
                                   );
@@ -934,7 +915,7 @@ function Visualize({error, setError}: VisualizeProps) {
                                   dispatch(
                                     {
                                       type: updateAction,
-                                      payload: wrapFieldsPayload(newFields),
+                                      payload: newFields,
                                     },
                                     {updateUrl: true}
                                   );
@@ -1008,9 +989,8 @@ function Visualize({error, setError}: VisualizeProps) {
                               onClick={() => {
                                 dispatch({
                                   type: updateAction,
-                                  payload: wrapFieldsPayload(
-                                    fields?.filter((_field, i) => i !== index) ?? []
-                                  ),
+                                  payload:
+                                    fields?.filter((_field, i) => i !== index) ?? [],
                                 });
 
                                 if (
@@ -1082,7 +1062,7 @@ function Visualize({error, setError}: VisualizeProps) {
             onClick={() => {
               dispatch({
                 type: updateAction,
-                payload: wrapFieldsPayload([...(fields ?? []), cloneDeep(defaultField)]),
+                payload: [...(fields ?? []), cloneDeep(defaultField)],
               });
 
               trackAnalytics('dashboards_views.widget_builder.change', {
@@ -1112,10 +1092,10 @@ function Visualize({error, setError}: VisualizeProps) {
                 onClick={() => {
                   dispatch({
                     type: updateAction,
-                    payload: wrapFieldsPayload([
+                    payload: [
                       ...(fields ?? []),
                       {kind: FieldValueKind.EQUATION, field: ''},
-                    ]),
+                    ],
                   });
 
                   trackAnalytics('dashboards_views.widget_builder.change', {
