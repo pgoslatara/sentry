@@ -525,7 +525,7 @@ const TourTriggerWrapper = styled('div')<{margin?: CSSProperties['margin']}>`
       z-index: ${p => p.theme.zIndex.tour.element + 1};
       inset: 0;
       border-radius: ${p => p.theme.radius.md};
-      box-shadow: inset 0 0 0 3px ${p => p.theme.tokens.border.accent.vibrant};
+      box-shadow: inset 0 0 0 3px ${p => p.theme.tokens.focus.default};
       ${p => defined(p.margin) && `margin: ${p.margin};`}
     }
   }

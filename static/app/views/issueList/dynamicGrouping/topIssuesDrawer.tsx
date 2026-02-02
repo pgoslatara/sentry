@@ -965,7 +965,7 @@ const IssueMessage = styled(EventMessage)`
 const MetaSeparator = styled('div')`
   height: 10px;
   width: 1px;
-  background-color: ${p => p.theme.tokens.border.secondary};
+  background-color: ${p => p.theme.tokens.background.tertiary};
 `;
 
 const IssuePreviewCard = styled('div')`
@@ -1049,7 +1049,7 @@ const TagMiniBar = styled('div')`
   border-radius: 3px;
   overflow: hidden;
   background: ${p => p.theme.tokens.background.secondary};
-  box-shadow: inset 0 0 0 1px ${p => p.theme.tokens.border.secondary};
+  box-shadow: inset 0 0 0 1px ${p => p.theme.tokens.focus.default};
 `;
 
 const DenseTagChip = styled('div')`
