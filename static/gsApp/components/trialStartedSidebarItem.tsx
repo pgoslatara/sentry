@@ -182,7 +182,7 @@ const startedStyle = (theme: Theme) => css`
   }
 
   &:hover {
-    box-shadow: 0 0 8px ${theme.tokens.background.accent.vibrant};
+    box-shadow: 0 0 8px ${theme.tokens.focus.default};
   }
 `;
 

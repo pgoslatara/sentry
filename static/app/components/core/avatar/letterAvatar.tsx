@@ -42,7 +42,7 @@ const LetterAvatarComponent = styled('svg')<LetterAvatarProps>`
   rect {
     fill: ${props =>
       props.suggested
-        ? props.theme.tokens.background.primary
+        ? props.theme.tokens.graphics.neutral.muted
         : getColor(props.identifier, props.theme).background};
   }
 
