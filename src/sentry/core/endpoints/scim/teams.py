@@ -3,6 +3,7 @@ import re
 from typing import Any
 
 import sentry_sdk
+from django.conf import settings
 from django.db import IntegrityError, router, transaction
 from django.http.response import HttpResponseBase
 from django.utils.text import slugify
@@ -31,6 +32,7 @@ from sentry.apidocs.constants import (
 from sentry.apidocs.examples.scim_examples import SCIMExamples
 from sentry.apidocs.parameters import GlobalParams
 from sentry.apidocs.utils import inline_sentry_response_serializer
+from sentry.conf.types.sentry_config import SentryMode
 from sentry.core.endpoints.organization_teams import CONFLICTING_SLUG_ERROR, TeamPostSerializer
 from sentry.core.endpoints.team_details import TeamDetailsEndpoint
 from sentry.core.endpoints.team_details import TeamDetailsSerializer as TeamSerializer
@@ -39,6 +41,7 @@ from sentry.models.organizationmember import OrganizationMember
 from sentry.models.organizationmemberteam import OrganizationMemberTeam
 from sentry.models.team import Team, TeamStatus
 from sentry.signals import team_created
+from sentry.users.services.user.service import user_service
 from sentry.utils import json, metrics
 from sentry.utils.cursors import SCIMCursor
 from sentry.utils.snowflake import MaxSnowflakeRetryError
@@ -350,7 +353,61 @@ class OrganizationSCIMTeamDetails(SCIMEndpoint, TeamDetailsEndpoint):
         )
         return Response(context)
 
-    def _add_members_operation(self, request: Request, operation, team):
+    def _should_update_privileges(self, team: Team) -> bool:
+        """Check if this team should trigger privilege updates."""
+        return (
+            settings.SENTRY_MODE == SentryMode.SAAS
+            and team.organization.id == settings.SENTRY_DEFAULT_ORGANIZATION_ID
+            and team.slug in ("staff", "superuser")
+        )
+
+    def _collect_privilege_update(
+        self, privilege_updates: list, member: OrganizationMember, team: Team, grant: bool
+    ) -> None:
+        """
+        Collect privilege updates to be applied after transaction completes.
+
+        Only applies when:
+        - Organization is the default SaaS organization
+        - Running in SaaS mode
+        - Team slug is "staff" or "superuser"
+        - Member has a linked user account
+        """
+        if not self._should_update_privileges(team) or not member.user_id:
+            return
+
+        # Determine which privilege to update based on team slug
+        attrs = {}
+        if team.slug == "staff":
+            attrs["is_staff"] = grant
+        elif team.slug == "superuser":
+            attrs["is_superuser"] = grant
+
+        if attrs:
+            privilege_updates.append(
+                {
+                    "user_id": member.user_id,
+                    "attrs": attrs,
+                    "organization": team.organization.slug,
+                    "team": team.slug,
+                    "grant": grant,
+                }
+            )
+
+    def _apply_privilege_updates(self, privilege_updates: list) -> None:
+        """Apply collected privilege updates after transaction completes."""
+        for update in privilege_updates:
+            user_service.update_user(user_id=update["user_id"], attrs=update["attrs"])
+            metrics.incr(
+                "sentry.scim.team.update_privileges",
+                tags={
+                    "organization": update["organization"],
+                    "team": update["team"],
+                    "grant": update["grant"],
+                },
+            )
+
+    def _add_members_operation(self, request: Request, operation, team, privilege_updates: list):
         for member in operation["value"]:
             member = OrganizationMember.objects.get(
                 organization=team.organization, id=member["value"]
@@ -370,7 +427,10 @@ class OrganizationSCIMTeamDetails(SCIMEndpoint, TeamDetailsEndpoint):
                     data=omt.get_audit_log_data(),
                 )
 
-    def _remove_members_operation(self, request: Request, member_id, team):
+            # Collect privilege updates for later
+            self._collect_privilege_update(privilege_updates, member, team, grant=True)
+
+    def _remove_members_operation(self, request: Request, member_id, team, privilege_updates: list):
         member = OrganizationMember.objects.get(organization=team.organization, id=member_id)
         with transaction.atomic(router.db_for_write(OrganizationMemberTeam)):
             try:
@@ -387,6 +447,9 @@ class OrganizationSCIMTeamDetails(SCIMEndpoint, TeamDetailsEndpoint):
                 data=omt.get_audit_log_data(),
             )
             omt.delete()
+
+        # Collect privilege updates for later
+        self._collect_privilege_update(privilege_updates, member, team, grant=False)
 
     def _rename_team_operation(self, request: Request, new_name, team):
         serializer = TeamSerializer(
@@ -431,6 +494,10 @@ class OrganizationSCIMTeamDetails(SCIMEndpoint, TeamDetailsEndpoint):
 
         if len(operations) > 100:
             return Response(SCIM_400_TOO_MANY_PATCH_OPS_ERROR, status=400)
+
+        # Collect privilege updates to apply after transaction
+        privilege_updates: list = []
+
         try:
             with transaction.atomic(router.db_for_write(OrganizationMemberTeam)):
                 team.idp_provisioned = True
@@ -439,10 +506,13 @@ class OrganizationSCIMTeamDetails(SCIMEndpoint, TeamDetailsEndpoint):
                 for operation in operations:
                     op = operation["op"].lower()
                     if op == TeamPatchOps.ADD and operation["path"] == "members":
-                        self._add_members_operation(request, operation, team)
+                        self._add_members_operation(request, operation, team, privilege_updates)
                     elif op == TeamPatchOps.REMOVE and "members" in operation["path"]:
                         self._remove_members_operation(
-                            request, self._get_member_id_for_remove_op(operation), team
+                            request,
+                            self._get_member_id_for_remove_op(operation),
+                            team,
+                            privilege_updates,
                         )
                     elif op == TeamPatchOps.REPLACE:
                         path = operation.get("path")
@@ -455,7 +525,9 @@ class OrganizationSCIMTeamDetails(SCIMEndpoint, TeamDetailsEndpoint):
                                     OrganizationMemberTeam.objects.filter(team_id=team.id)
                                 )
                                 OrganizationMemberTeam.objects.bulk_delete(existing)
-                                self._add_members_operation(request, operation, team)
+                                self._add_members_operation(
+                                    request, operation, team, privilege_updates
+                                )
                         # azure and okta handle team name change operation differently
                         elif path is None:
                             # for okta
@@ -473,6 +545,9 @@ class OrganizationSCIMTeamDetails(SCIMEndpoint, TeamDetailsEndpoint):
         except IntegrityError as e:
             sentry_sdk.capture_exception(e)
             return Response(SCIM_400_INTEGRITY_ERROR, status=400)
+
+        # Apply privilege updates after transaction completes
+        self._apply_privilege_updates(privilege_updates)
 
         metrics.incr("sentry.scim.team.update", tags={"organization": organization})
         return self.respond(status=204)
